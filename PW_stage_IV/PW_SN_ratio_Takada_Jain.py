@@ -102,8 +102,6 @@ def cal_signal_noise_ratio():
     def SNR_fun(l, rank):
         n_l = default_num_l_in_rank * rank + l
         ell = l_min + n_l * delta_l
-        #offset_cijl = n_l * N_dset * data_type_size
-
         # put the whole array cij for an given ell into the upper triangle part of the matrix
         cijl_array = Cijl_sets[l*N_dset_ext: (l+1)*N_dset_ext]
         #print(cijl_array, cijl_array.shape)

@@ -16,7 +16,6 @@ import argparse
 #---------------------------------------------------------
 parser = argparse.ArgumentParser(description="Calculate G' with shape noise dependence in Cov(C^ii(l), C^jj(l)), made by Zhejie.")
 parser.add_argument("--nrbin", help = 'Number of tomographic bins.', type=int, required=True)
-parser.add_argument("--num_kout", help = '*Number of output k bins.', type=int, required=True)
 parser.add_argument("--snf", help = '*The shape noise factor from the default value.', type=float, required=True)
 parser.add_argument("--Pk_type", help = "*The type of input P(k), whether it's linear (Pwig), or damped (Pwig_nonlinear), or without BAO (Pnow).", required=True)
 parser.add_argument("--Psm_type", help = '*The expression of Pnorm. The default case, Pnorm from Eisenstein & Zaldarriaga 1999. \
@@ -26,7 +25,6 @@ parser.add_argument("--odir0", help = "*The basic directory of output files, e.g
 
 args = parser.parse_args()
 num_rbin = args.nrbin
-num_kout = args.num_kout
 snf = args.snf
 Pk_type = args.Pk_type
 Psm_type = args.Psm_type

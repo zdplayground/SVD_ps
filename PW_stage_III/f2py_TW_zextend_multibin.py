@@ -4,6 +4,7 @@
 # Note that \sigma_z is a parameter of photo-z distribution given the true redshift. We need to modify function photo_ni.
 # Here we set n_gal=31 as the default case. If we need to set it to be 10 instead, we could set the effective shape noise factor in code mpi_PW_sn_dep_Cov_multibin.py.
 # 1. Add the input of the number of ell (work) need to be executed for each rank based on the approximated calculation time for low and high ells. --06/14/2018
+# 2. Add the angurement alpha as the BAO scale shifting parameter, it is applied on ell such as ell' = alpha * ell. --07/27/2018
 #
 #######################################################################################################################################################
 # This program is based on f2py_TW_zextend, modified to generate .bin data files, 07/23/2016. (Retain the notes from the previous code.)
@@ -49,6 +50,9 @@ parser.add_argument("--cal_sn", help = "Whether it's going to calculate (pseudo)
 parser.add_argument("--cal_cijl", help = "Whether it's going to calculate Cij(l). True or False.")
 parser.add_argument("--cal_Gm", help = "Whether it's going to calculate G matrix. True or False")
 parser.add_argument("--show_nz", help = "Whether it's going to plot n^i(z) distribution in photo-z tomographic bin. True or False.")
+parser.add_argument("--odir0", help = "The basic directory for output files, default is './'.", required=True)
+parser.add_argument("--alpha", help = "The BAO scale shifting parameter alpha, i.e. k'=alpha * k or l'= alpha * l given a \chi. ", default=1.0, type=np.float64)
+
 ##parser.add_argument("--num_eigv", help = 'Number of eigenvalues included from SVD.', required=True)
 args = parser.parse_args()
 
@@ -59,6 +63,7 @@ cal_sn = args.cal_sn
 cal_cijl = args.cal_cijl
 cal_Gm = args.cal_Gm
 show_nz = args.show_nz
+alpha = args.alpha
 #----------------------------------------------------------------------------------------#
 
 def main():
@@ -238,7 +243,10 @@ def main():
         elif Pk_type == 'Pwig_nonlinear':
             Pk_par[i] = Pk_now_spl(k_par[i]) + (Pk_camb_spl(k_par[i]) - Pk_now_spl(k_par[i]))* np.exp(-k_par[i]**2.0*Sigma2_xy/2.0)
 
-    odir = './mpi_preliminary_data_{}/comm_size{}/'.format(Pk_type, size)
+    odir0 = args.odir0
+    if alpha != None:
+        odir0 = odir0 + 'BAO_alpha_{}/'.format(alpha)
+    odir = odir0 + 'mpi_preliminary_data_{}/comm_size{}/'.format(Pk_type, size)
     if rank == 0:
         if not os.path.exists(odir):
             os.makedirs(odir)
@@ -274,6 +282,7 @@ def main():
         def cal_cijl(l, rank):
             n_l = np.sum(num_ell_array[0: rank]) + l
             ell = l_min + n_l * delta_l
+            ell = alpha * ell
             ##offset_cijl = n_l * N_dset * data_type_size
             c_temp = np.zeros((nbin_ext, nbin_ext))
             for c_i in range(nbin_ext):
@@ -351,6 +360,7 @@ def main():
         def cal_Gm(l, rank):
             n_l = np.sum(num_ell_array[0: rank]) + l
             ell = l_min + n_l * delta_l
+            ell = alpha * ell
             ##offset_Gm = n_l * N_dset * num_kout * data_type_size
 
             Gmatrix_l = np.zeros((N_dset, num_kout))
