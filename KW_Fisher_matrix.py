@@ -1,6 +1,7 @@
 #!/Users/ding/anaconda3/bin/python
 # Copy the code from KW_sn_ratio_Takada_Jain.py, modify it to calculate the Fisher matrix Cijl_wig-Cijl_now, reference is taken from, e.g. Eq. (26) in Hu & Jain 2004.
 # We use the covariance matrix of Cijl_wig with conisderation of shape noise. --07/25/2018
+# Change the function Fisher_element() to Fisher_matrix() which calculates 2 by 2 Fisher matrix with two parameters alpha and A. --08/06/2018
 #
 from mpi4py import MPI
 import numpy as np
@@ -139,49 +140,51 @@ def cal_Fisher():
     comm.Barrier()
     Cijl_freader.Close()
 
-    def Fisher_element(l, rank):
+    def Fisher_matrix(l, rank):
         n_l = default_num_l_in_rank * rank + l
         ell = l_min + n_l * delta_l
-        cijl_default = Cijl_sets_default[l*N_dset: (l+1)*N_dset]
+        cijl_wnw_default = Cijl_sets_default[l*N_dset: (l+1)*N_dset]
         cijl_wig_default = Cijl_wig_default[l*N_dset: (l+1)*N_dset]
-        cijl_sn = np.array(cijl_wig_default)                                  # Distinguish the observed C^ijl) (denoted by cijl_sn) from the true C^ij(l)
-        cijl_sn[sn_id] = cijl_wig_default[sn_id] + pseudo_sn                  # Add shape noise on C^ii terms to get cijl_sn
+        cijl_wig_sn = np.array(cijl_wig_default)                                  # Distinguish the observed C^ijl) (denoted by cijl_wig_sn) from the true C^ij(l)
+        cijl_wig_sn[sn_id] = cijl_wig_default[sn_id] + pseudo_sn                  # Add shape noise on C^ii terms to get cijl_wig_sn
 
-        cijl_shift = Cijl_sets_shift[l*N_dset: (l+1)*N_dset]
-        cijl_diff = cijl_shift - cijl_default
-        #print('ell, cijl_diff:', ell, cijl_diff)
-        Cov_cij_cpq = cal_cov_matrix(num_rbin, iu1, cijl_sn)             # Get an upper-triangle matrix for Cov(C^ij, C^pq) from Fortran subroutine wrapped.
+        cijl_wnw_shift = Cijl_sets_shift[l*N_dset: (l+1)*N_dset]
+        delta_cijl_wnw = cijl_wnw_shift - cijl_wnw_default
+        #print('ell, delta_cijl_wnw:', ell, delta_cijl_wnw)
+        Cov_cij_cpq = cal_cov_matrix(num_rbin, iu1, cijl_wig_sn)             # Get an upper-triangle matrix for Cov(C^ij, C^pq) from Fortran subroutine wrapped.
         Cov_cij_cpq = Cov_cij_cpq.T + np.triu(Cov_cij_cpq, k=1)          # It's symmetric. Construct the whole matrix for inversion.
         inv_Cov_cij_cpq = linalg.inv(Cov_cij_cpq, overwrite_a=True)
         inv_Cov_cij_cpq = inv_Cov_cij_cpq * ((2.0*ell+1.0)*delta_l*f_sky)             # Take account of the number of modes (the denominator) and f_sky
         #print('ell, inv_Cov_cij_cpq', ell, inv_Cov_cij_cpq)
-        #dcijl_dalpha = cijl_diff/(alpha-1.0)
-        dcijl_dalpha = cijl_diff/(alpha-1.0)
-        faa = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, dcijl_dalpha])
+        #dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
+        dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
+        f_alpalp = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, dcijl_dalpha])
+        f_alpA = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, delta_cijl_wnw])
+        f_AA = reduce(np.dot, [delta_cijl_wnw, inv_Cov_cij_cpq, delta_cijl_wnw])
 
         # if rank == 0 and ell == 31:
-        #     print('ell, cijl_default, cijl_shift, cijl_diff, inv_Cov_cij_cpq', ell, cijl_default, cijl_shift, cijl_diff, inv_Cov_cij_cpq)
-        return ell, faa
+        #     print('ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq', ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq)
+        return ell, f_alpalp, f_alpA, f_AA
 
     #-------- Output signal-to-noise ratio from each ell -------##
-    faa_ofile = ofprefix + 'faa_per_ell_{}rbins_{}kbins_snf{}_rank{}.dat'.format(num_rbin, num_kin, snf, rank)
+    fisher_ofile = ofprefix + 'fisher_per_ell_{}rbins_{}kbins_snf{}_rank{}.dat'.format(num_rbin, num_kin, snf, rank)
     data_m = np.array([], dtype=np.float64).reshape(0, 2)
-    header_line = " ell      faa"
+    header_line = " ell      f_alpalp    f_alpA    f_AA"
     iu1 = np.triu_indices(num_rbin)
     sn_id = [int((2*num_rbin+1-ii)*ii/2) for ii in range(num_rbin)]          # The ID of dset C^ij(l) added by the shape noise when i=j (auto power components)
-    Faa = 0.0
+    F_alpalp = 0.0
     for l in range(num_l_in_rank):
-        ell, faa = Fisher_element(l, rank)
-        data_m = np.vstack((data_m, np.array([ell, faa])))
-        Faa = Faa + faa
-    print('Faa:', Faa, 'from rank:', rank)
-    np.savetxt(faa_ofile, data_m, fmt='%.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
+        ell, f_alpalp, f_alpA, f_AA = Fisher_matrix(l, rank)
+        data_m = np.vstack((data_m, np.array([ell, f_alpalp])))
+        F_alpalp = F_alpalp + f_alpalp
+    print('F_alpalp:', F_alpalp, 'from rank:', rank)
+    np.savetxt(fisher_ofile, data_m, fmt='%.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
 
-    Faa_total = comm.reduce(Faa, op=MPI.SUM, root=0)
+    F_alpalp_total = comm.reduce(F_alpalp, op=MPI.SUM, root=0)
     comm.Barrier()
     t_end = MPI.Wtime()
     if rank == 0:
-        print('The total Fisher Faa is:', Faa_total, 'sigma alpha (%)=', 1./Faa_total**0.5 * 100)
+        print('The total Fisher Faa is:', F_alpalp_total, 'sigma alpha (%)=', 1./F_alpalp_total**0.5 * 100)
         print('With total processes', size, ', the running time:', t_end-t_start)
 
 def main():
