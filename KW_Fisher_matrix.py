@@ -20,8 +20,8 @@ parser.add_argument("--snf", help = '*The shape noise factor from the default va
 #parser.add_argument("--Pk_type", help = "*The type of input P(k), whether it's linear (Pwig), or damped (Pwig_nonlinear), or without BAO (Pnow).", required=True)
 parser.add_argument("--Psm_type", help = '*The expression of Pnorm. The default case, Pnorm from Eisenstein & Zaldarriaga 1999. \
                                           If Pnorm=Pnow, it is derived from transfer function.')
-parser.add_argument("--idir0", help = "*The basic directory of input files, e.g., './precise_Cijl_Gm/'.", required=True)
-parser.add_argument("--odir0", help = "*The basic directory of output files, e.g., './precise_Cijl_Gm/'.", required=True)
+parser.add_argument("--idir0", help = "*The basic directory of input files, e.g., './KW_stage_IV/'.", required=True)
+parser.add_argument("--odir0", help = "*The basic directory of output files, e.g., './KW_stage_IV/'.", required=True)
 parser.add_argument("--alpha", help = "The BAO scale shifting parameter alpha, i.e. k'=alpha * k or l'= alpha * l given a \chi. Value could be e.g. 1.02.", required=True, type=np.float64)
 
 args = parser.parse_args()
@@ -155,12 +155,17 @@ def cal_Fisher():
         Cov_cij_cpq = Cov_cij_cpq.T + np.triu(Cov_cij_cpq, k=1)          # It's symmetric. Construct the whole matrix for inversion.
         inv_Cov_cij_cpq = linalg.inv(Cov_cij_cpq, overwrite_a=True)
         inv_Cov_cij_cpq = inv_Cov_cij_cpq * ((2.0*ell+1.0)*delta_l*f_sky)             # Take account of the number of modes (the denominator) and f_sky
+
+        temp_Cov = cal_cov_matrix(num_rbin, iu1, cijl_wnw_default)
+        temp_Cov = temp_Cov.T + np.triu(temp_Cov, k=1)
+        #temp_inv_Cov = linalg.inv(temp_Cov, overwrite_a=True) * ((2.0*ell+1.0)*delta_l*f_sky)   # we can't do that since there is zero submatrix without considering shape noise
         #print('ell, inv_Cov_cij_cpq', ell, inv_Cov_cij_cpq)
         #dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
         dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
         f_alpalp = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, dcijl_dalpha])
-        f_alpA = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, delta_cijl_wnw])
-        f_AA = reduce(np.dot, [delta_cijl_wnw, inv_Cov_cij_cpq, delta_cijl_wnw])
+        f_alpA = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, cijl_wnw_default])
+        f_AA = reduce(np.dot, [cijl_wig_default, inv_Cov_cij_cpq, cijl_wig_default])
+        #f_AA = reduce(np.dot, [cijl_wnw_default, inv_Cov_cij_cpq, cijl_wnw_default])
 
         # if rank == 0 and ell == 31:
         #     print('ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq', ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq)
@@ -168,28 +173,33 @@ def cal_Fisher():
 
     #-------- Output signal-to-noise ratio from each ell -------##
     fisher_ofile = ofprefix + 'fisher_per_ell_{}rbins_{}kbins_snf{}_rank{}.dat'.format(num_rbin, num_kin, snf, rank)
-    data_m = np.array([], dtype=np.float64).reshape(0, 2)
+    data_m = np.array([], dtype=np.float64).reshape(0, 4)
     header_line = " ell      f_alpalp    f_alpA    f_AA"
     iu1 = np.triu_indices(num_rbin)
     sn_id = [int((2*num_rbin+1-ii)*ii/2) for ii in range(num_rbin)]          # The ID of dset C^ij(l) added by the shape noise when i=j (auto power components)
-    F_alpalp = 0.0
     for l in range(num_l_in_rank):
         ell, f_alpalp, f_alpA, f_AA = Fisher_matrix(l, rank)
-        data_m = np.vstack((data_m, np.array([ell, f_alpalp])))
-        F_alpalp = F_alpalp + f_alpalp
-    print('F_alpalp:', F_alpalp, 'from rank:', rank)
-    np.savetxt(fisher_ofile, data_m, fmt='%.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
-
-    F_alpalp_total = comm.reduce(F_alpalp, op=MPI.SUM, root=0)
+        data_m = np.vstack((data_m, np.array([ell, f_alpalp, f_alpA, f_AA])))
+    print('F_alpalp:', np.sum(data_m[:, 1]), 'from rank:', rank)
+    np.savetxt(fisher_ofile, data_m, fmt='%i %.7e %.7e %.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
+    sum_fisher = np.zeros(3)
     comm.Barrier()
+    comm.Reduce(np.sum(data_m[:, 1:], axis=0), sum_fisher, op=MPI.SUM, root=0)
+
     t_end = MPI.Wtime()
     if rank == 0:
-        print('The total Fisher Faa is:', F_alpalp_total, 'sigma alpha (%)=', 1./F_alpalp_total**0.5 * 100)
+        Fisher_matrix = np.zeros((2,2))
+        Fisher_matrix[0, 0] = sum_fisher[0]
+        Fisher_matrix[0, 1] = Fisher_matrix[1, 0] = sum_fisher[1]
+        Fisher_matrix[1, 1] = sum_fisher[2]
+        print('The Fisher matrix is:', Fisher_matrix)
+        inverse_Fisher = linalg.inv(Fisher_matrix, overwrite_a=True)
+        print('The inverse Fisher:', inverse_Fisher)#, 'and sigma_alpha=', inverse_Fisher[0, 0]**0.5 * 100))
         print('With total processes', size, ', the running time:', t_end-t_start)
 
 def main():
-    cal_Cijl_wnw_diff(ifprefix_default)
-    cal_Cijl_wnw_diff(ifprefix_shift)
+    # cal_Cijl_wnw_diff(ifprefix_default)
+    # cal_Cijl_wnw_diff(ifprefix_shift)
     cal_Fisher()
 
 if __name__ == '__main__':
