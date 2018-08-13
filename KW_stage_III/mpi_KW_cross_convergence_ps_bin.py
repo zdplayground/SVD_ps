@@ -1,6 +1,7 @@
 #!/Users/ding/miniconda3/bin/python
 # -*- coding: utf-8 -*-
 # Copy the same code from the folder ../pseudo_KW_stage_IV without modifing anything fundamental. -- 03/06/2018
+# 1. Change the y label of number density plot from n^i(z) to dn^i/dz. --08/13/2018
 #
 from mpi4py import MPI
 import numpy as np
@@ -372,8 +373,8 @@ def main():
         # print(n, bins, pathes)
         ax.plot(center_z, n_z, 'k-', lw=2.0)
         ax.set_xlim([0.0, 1.3])
-        ax.set_xlabel('$z$', fontsize=20)
-        ax.set_ylabel('$n^i(z)$ $[\mathtt{arcmin}]^{-2}$', fontsize=20)
+        ax.set_xlabel(r'$z$', fontsize=20)
+        ax.set_ylabel(r'$dn^i/dz \; [\mathtt{arcmin}]^{-2}$', fontsize=20)
         ax.minorticks_on()
         ax.tick_params('both', length=5, width=2, which='major', labelsize=15)
         ax.tick_params('both', length=3, width=1, which='minor')
