@@ -14,7 +14,7 @@ from cov_matrix_module import cal_cov_matrix
 import argparse
 
 #---------------------------------------------------------
-parser = argparse.ArgumentParser(description="Calculate Fisher matrix of Cijl_wig-Cijl_now, made by Zhejie.", )
+parser = argparse.ArgumentParser(description="Calculate Fisher matrix of Cijl_wig-Cijl_now with MPI implementation, made by Zhejie.", )
 parser.add_argument("--nrbin", help = 'Number of tomographic bins.', type=int, required=True)
 parser.add_argument("--snf", help = '*The shape noise factor from the default value.', type=float, required=True)
 #parser.add_argument("--Pk_type", help = "*The type of input P(k), whether it's linear (Pwig), or damped (Pwig_nonlinear), or without BAO (Pnow).", required=True)
@@ -22,7 +22,9 @@ parser.add_argument("--Psm_type", help = '*The expression of Pnorm. The default 
                                           If Pnorm=Pnow, it is derived from transfer function.')
 parser.add_argument("--idir0", help = "*The basic directory of input files, e.g., './KW_stage_IV/'.", required=True)
 parser.add_argument("--odir0", help = "*The basic directory of output files, e.g., './KW_stage_IV/'.", required=True)
-parser.add_argument("--alpha", help = "The BAO scale shifting parameter alpha, i.e. k'=alpha * k or l'= alpha * l given a \chi. Value could be e.g. 1.02.", required=True, type=np.float64)
+parser.add_argument("--alpha_plus", help = "*The BAO scale shifting parameter alpha larger than 1, i.e. k'=alpha * k or l'= alpha * l given a \chi. Value could be e.g. 1.02.", type=np.float64, required=True)
+parser.add_argument("--alpha_minus", help = "*The BAO scale shifting parameter alpha less than 1.", type=np.float64, required=True)
+parser.add_argument("--cal_Cijl_wnw", help = "Whether we need to calculate Cijl_wig-Cijl_now for default alpha or shifted alpha.", default='True')
 
 args = parser.parse_args()
 num_rbin = args.nrbin
@@ -30,18 +32,22 @@ snf = args.snf
 #Pk_type = args.Pk_type
 Psm_type = args.Psm_type
 idir0 = args.idir0
-alpha = args.alpha
+alpha_plus = args.alpha_plus
+alpha_minus = args.alpha_minus
 
 prefix = 'Tully-Fisher_'
 idir1 = 'mpi_preliminary_data_{}/'
 idir_default = idir0 + idir1
 ##idir_default = idir0 + 'BAO_alpha_1.0/' + idir1
-idir_shift = idir0 + 'BAO_alpha_{}/'.format(alpha) + idir1
-ifprefix_default = idir_default + prefix
-ifprefix_shift = idir_shift + prefix
+idir_shift_aplus = idir0 + 'BAO_alpha_{}/'.format(alpha_plus) + idir1
+idir_shift_aminus = idir0 + 'BAO_alpha_{}/'.format(alpha_minus) + idir1
+ifprefix_default = idir_default + prefix                # alpha = 1.0, directory of default data
+ifprefix_shift_aplus = idir_shift_aplus + prefix
+ifprefix_shift_aminus = idir_shift_aminus + prefix
 
 num_kin = 505
 cijl_filename = 'Cij_l_{0}rbins_{1}kbins_CAMB.bin'.format(num_rbin, num_kin)
+cijl_wnw_filename = 'Cij_l_wnw_diff_{0}rbins_{1}kbins_CAMB.bin'.format(num_rbin, num_kin)
 
 #------------- calculate the difference between Cijl with and without the BAO wiggles ------
 def cal_Cijl_wnw_diff(ifprefix):
@@ -90,7 +96,7 @@ def cal_Fisher():
     comm.Bcast(pseudo_sn, root=0)
 
     #------------- !! write output files, they are the basic files --------------#
-    ofdir = odir0 + 'BAO_alpha_{}/mpi_{}sn_exp_k_data_Pwig_nonlinear/comm_size{}/'.format(alpha, prefix, size)
+    ofdir = odir0 + 'BAO_alpha_{}/mpi_{}sn_exp_k_data_Pwig_nonlinear/comm_size{}/'.format(alpha_plus, prefix, size)
     ofprefix = ofdir + prefix
     if rank == 0:
         if not os.path.exists(ofdir):
@@ -106,73 +112,61 @@ def cal_Fisher():
     else:
         num_l_in_rank = default_num_l_in_rank
 
-    # be careful here we have extended photometric redshift bins, which is different from TF case.
+    # the length of Cijl array read by each rank
     Cijl_len = num_l_in_rank * N_dset
-    Cijl_wig_default = np.zeros(Cijl_len)
-    Cijl_sets_default = np.zeros(Cijl_len)
-    Cijl_sets_shift = np.zeros(Cijl_len)
+    def read_Cijl_MPI(Cijl_len, ifile, comm, rank):
+        Cijl_target = np.zeros(Cijl_len)
+        Cijl_freader = MPI.File.Open(comm, ifile)           # Open and read a binary file
+        Cijl_fh_start = rank * Cijl_len * data_type_size    # need to calculate how many bytes shifted
+        Cijl_freader.Seek(Cijl_fh_start)
+        Cijl_freader.Read([Cijl_target, MPI.DOUBLE])          # Read using individual file pointer
+        Cijl_freader.Close()
+        return Cijl_target
 
-    cijl_wnw_filename = 'Cij_l_wnw_diff_{0}rbins_{1}kbins_CAMB.bin'.format(num_rbin, num_kin)
-    # Read the default Cijl, with delta_l = 3
-    file_Cijl_cross = ifprefix_default.format('Pwig_nonlinear') + cijl_wnw_filename
-    Cijl_freader = MPI.File.Open(comm, file_Cijl_cross) # Open and read a binary file
-    Cijl_fh_start = rank * Cijl_len * data_type_size    # need to calculate how many bytes shifted
-    Cijl_freader.Seek(Cijl_fh_start)
-    Cijl_freader.Read([Cijl_sets_default, MPI.DOUBLE])          # Read using individual file pointer
-    #print('Cij(l) from rank', rank, 'is:', Cijl_sets, '\n')
-    comm.Barrier()
-    Cijl_freader.Close()
+    # Read the default Cijl_wig from alpha=1.0, with delta_l = 3
+    ifile_Cwig_default = ifprefix_default.format('Pwig_nonlinear') + cijl_filename
+    Cijl_wig_default = read_Cijl_MPI(Cijl_len, ifile_Cwig_default, comm, rank)
 
-    file_Cijl_cross = ifprefix_default.format('Pwig_nonlinear') + cijl_filename
-    Cijl_freader = MPI.File.Open(comm, file_Cijl_cross) # Open and read a binary file
-    Cijl_fh_start = rank * Cijl_len * data_type_size    # need to calculate how many bytes shifted
-    Cijl_freader.Seek(Cijl_fh_start)
-    Cijl_freader.Read([Cijl_wig_default, MPI.DOUBLE])          # Read using individual file pointer
-    comm.Barrier()
-    Cijl_freader.Close()
+    # Read the default Cijl_now
+    ifile_Cwnw_default = ifprefix_default.format('Pwig_nonlinear') + cijl_wnw_filename
+    Cijl_wnw_default = read_Cijl_MPI(Cijl_len, ifile_Cwnw_default, comm, rank)
 
-    # Read the Cijl with shift ell value
-    file_Cijl_cross = ifprefix_shift.format('Pwig_nonlinear') + cijl_wnw_filename
-    Cijl_freader = MPI.File.Open(comm, file_Cijl_cross) # Open and read a binary file
-    Cijl_fh_start = rank * Cijl_len * data_type_size    # need to calculate how many bytes shifted
-    Cijl_freader.Seek(Cijl_fh_start)
-    Cijl_freader.Read([Cijl_sets_shift, MPI.DOUBLE])          # Read using individual file pointer
-    comm.Barrier()
-    Cijl_freader.Close()
+    # Read the Cijl_wnw from shifted ell value with alpha larger than 1.0
+    ifile_Cwnw_aplus = ifprefix_shift_aplus.format('Pwig_nonlinear') + cijl_wnw_filename
+    Cijl_sets_shift_aplus = read_Cijl_MPI(Cijl_len, ifile_Cwnw_aplus, comm, rank)
+    # Read the Cijl_wnw from shifted ell value with alpha smaller than 1.0
+    ifile_Cwnw_aminus = ifprefix_shift_aminus.format('Pwig_nonlinear') + cijl_wnw_filename
+    Cijl_sets_shift_aminus = read_Cijl_MPI(Cijl_len, ifile_Cwnw_aminus, comm, rank)
 
     def Fisher_matrix(l, rank):
         n_l = default_num_l_in_rank * rank + l
         ell = l_min + n_l * delta_l
-        cijl_wnw_default = Cijl_sets_default[l*N_dset: (l+1)*N_dset]
         cijl_wig_default = Cijl_wig_default[l*N_dset: (l+1)*N_dset]
+        cijl_wnw_default = Cijl_wnw_default[l*N_dset: (l+1)*N_dset]
         cijl_wig_sn = np.array(cijl_wig_default)                                  # Distinguish the observed C^ijl) (denoted by cijl_wig_sn) from the true C^ij(l)
         cijl_wig_sn[sn_id] = cijl_wig_default[sn_id] + pseudo_sn                  # Add shape noise on C^ii terms to get cijl_wig_sn
 
-        cijl_wnw_shift = Cijl_sets_shift[l*N_dset: (l+1)*N_dset]
-        delta_cijl_wnw = cijl_wnw_shift - cijl_wnw_default
+        cijl_wnw_shift_aplus = Cijl_sets_shift_aplus[l*N_dset: (l+1)*N_dset]
+        cijl_wnw_shift_aminus = Cijl_sets_shift_aminus[l*N_dset: (l+1)*N_dset]
+        delta_cijl_wnw = cijl_wnw_shift_aplus - cijl_wnw_shift_aminus
         #print('ell, delta_cijl_wnw:', ell, delta_cijl_wnw)
-        Cov_cij_cpq = cal_cov_matrix(num_rbin, iu1, cijl_wig_sn)             # Get an upper-triangle matrix for Cov(C^ij, C^pq) from Fortran subroutine wrapped.
-        Cov_cij_cpq = Cov_cij_cpq.T + np.triu(Cov_cij_cpq, k=1)          # It's symmetric. Construct the whole matrix for inversion.
+        Cov_cij_cpq = cal_cov_matrix(num_rbin, iu1, cijl_wig_sn)                  # Get an upper-triangle matrix for Cov(C^ij, C^pq) from Fortran subroutine wrapped.
+        Cov_cij_cpq = Cov_cij_cpq.T + np.triu(Cov_cij_cpq, k=1)                   # It's symmetric. Construct the whole matrix for inversion.
         inv_Cov_cij_cpq = linalg.inv(Cov_cij_cpq, overwrite_a=True)
         inv_Cov_cij_cpq = inv_Cov_cij_cpq * ((2.0*ell+1.0)*delta_l*f_sky)             # Take account of the number of modes (the denominator) and f_sky
 
-        temp_Cov = cal_cov_matrix(num_rbin, iu1, cijl_wnw_default)
-        temp_Cov = temp_Cov.T + np.triu(temp_Cov, k=1)
-        #temp_inv_Cov = linalg.inv(temp_Cov, overwrite_a=True) * ((2.0*ell+1.0)*delta_l*f_sky)   # we can't do that since there is zero submatrix without considering shape noise
-        #print('ell, inv_Cov_cij_cpq', ell, inv_Cov_cij_cpq)
-        #dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
-        dcijl_dalpha = delta_cijl_wnw/(alpha-1.0)
+        dcijl_dalpha = delta_cijl_wnw/(alpha_plus - alpha_minus)
         f_alpalp = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, dcijl_dalpha])
-        f_alpA = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, cijl_wnw_default])
+        f_alpA = reduce(np.dot, [dcijl_dalpha, inv_Cov_cij_cpq, cijl_wnw_default])     # we need to use cijl_wnw_default to make the model consistent for sigma_alpha from Fisher
         f_AA = reduce(np.dot, [cijl_wig_default, inv_Cov_cij_cpq, cijl_wig_default])
-        #f_AA = reduce(np.dot, [cijl_wnw_default, inv_Cov_cij_cpq, cijl_wnw_default])
+        #f_AA = reduce(np.dot, [cijl_wnw_default, inv_Cov_cij_cpq, cijl_wnw_default])   # It's not correct
 
         # if rank == 0 and ell == 31:
         #     print('ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq', ell, cijl_wnw_default, cijl_wnw_shift, delta_cijl_wnw, inv_Cov_cij_cpq)
         return ell, f_alpalp, f_alpA, f_AA
 
     #-------- Output signal-to-noise ratio from each ell -------##
-    fisher_ofile = ofprefix + 'fisher_per_ell_{}rbins_{}kbins_snf{}_rank{}.dat'.format(num_rbin, num_kin, snf, rank)
+    fisher_ofile = ofprefix + 'fisher_per_ell_{}rbins_{}kbins_snf{}_rank{}_alpha_{}_{}.dat'.format(num_rbin, num_kin, snf, rank, alpha_plus, alpha_minus)
     data_m = np.array([], dtype=np.float64).reshape(0, 4)
     header_line = " ell      f_alpalp    f_alpA    f_AA"
     iu1 = np.triu_indices(num_rbin)
@@ -195,11 +189,16 @@ def cal_Fisher():
         print('The Fisher matrix is:', Fisher_matrix)
         inverse_Fisher = linalg.inv(Fisher_matrix, overwrite_a=True)
         print('The inverse Fisher:', inverse_Fisher)#, 'and sigma_alpha=', inverse_Fisher[0, 0]**0.5 * 100))
-        print('With total processes', size, ', the running time:', t_end-t_start)
+        sqrt_F_inv = inverse_Fisher**0.5
+        print('The (inverse Fisher)^0.5:', sqrt_F_inv)
+        print('r_alpA=', inverse_Fisher[0, 1]/(inverse_Fisher[0, 0] * inverse_Fisher[1, 1])**0.5)
+        #print('With total processes', size, ', the running time:', t_end-t_start)
 
 def main():
-    # cal_Cijl_wnw_diff(ifprefix_default)
-    # cal_Cijl_wnw_diff(ifprefix_shift)
+    if args.cal_Cijl_wnw == 'True':
+        cal_Cijl_wnw_diff(ifprefix_default)
+        cal_Cijl_wnw_diff(ifprefix_shift_aplus)
+        cal_Cijl_wnw_diff(ifprefix_shift_aminus)
     cal_Fisher()
 
 if __name__ == '__main__':
