@@ -1,0 +1,61 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module lens_eff_module ! in 
+    interface  ! in :lens_eff_module
+        subroutine lens_eff(num_bin,zbin,num_z,center_z,n_z,nz_y2,rb_id,z_k,sigma_z_const,g_i) ! in :lens_eff_module:lens_eff_fun.f95
+            integer, optional,intent(in),check((len(zbin)-1)>=num_bin),depend(zbin) :: num_bin=(len(zbin)-1)
+            double precision dimension(num_bin + 1),intent(in) :: zbin
+            integer, optional,intent(in),check(len(center_z)>=num_z),depend(center_z) :: num_z=len(center_z)
+            double precision dimension(num_z),intent(in) :: center_z
+            double precision dimension(num_z),intent(in),depend(num_z) :: n_z
+            double precision dimension(num_z),intent(in),depend(num_z) :: nz_y2
+            integer intent(in) :: rb_id
+            double precision intent(in) :: z_k
+            double precision intent(in) :: sigma_z_const
+            double precision intent(out) :: g_i
+        end subroutine lens_eff
+        subroutine photo_ni(num_bin,zbin,num_z,center_z,n_z,nz_y2,rb_id,s_z,sigma_z_const,ni_sz) ! in :lens_eff_module:lens_eff_fun.f95
+            integer, optional,intent(in),check((len(zbin)-1)>=num_bin),depend(zbin) :: num_bin=(len(zbin)-1)
+            double precision dimension(num_bin + 1),intent(in) :: zbin
+            integer, optional,intent(in),check(len(center_z)>=num_z),depend(center_z) :: num_z=len(center_z)
+            double precision dimension(num_z),intent(in) :: center_z
+            double precision dimension(num_z),intent(in),depend(num_z) :: n_z
+            double precision dimension(num_z),intent(in),depend(num_z) :: nz_y2
+            integer intent(in) :: rb_id
+            double precision intent(in) :: s_z
+            double precision intent(in) :: sigma_z_const
+            double precision intent(out) :: ni_sz
+        end subroutine photo_ni
+        subroutine comoving_d(z,cdis) ! in :lens_eff_module:comove_dis.f95
+            double precision intent(in) :: z
+            double precision intent(out) :: cdis
+        end subroutine comoving_d
+        subroutine gauleg(x1,x2,x,w,n) ! in :lens_eff_module:gauleg.f95
+            double precision intent(in) :: x1
+            double precision intent(in) :: x2
+            double precision dimension(n),intent(out),depend(n) :: x
+            double precision dimension(n),intent(out),depend(n) :: w
+            integer intent(in) :: n
+        end subroutine gauleg
+        subroutine spline(x,y,n,yp1,ypn,y2) ! in :lens_eff_module:spline.f95
+            double precision dimension(n),intent(in) :: x
+            double precision dimension(n),intent(in),depend(n) :: y
+            integer, optional,intent(in),check(len(x)>=n),depend(x) :: n=len(x)
+            double precision intent(in) :: yp1
+            double precision intent(in) :: ypn
+            double precision dimension(n),intent(out),depend(n) :: y2
+        end subroutine spline
+        subroutine splint(xa,ya,y2a,n,x,y) ! in :lens_eff_module:spline.f95
+            double precision dimension(n),intent(in) :: xa
+            double precision dimension(n),intent(in),depend(n) :: ya
+            double precision dimension(n),intent(in),depend(n) :: y2a
+            integer, optional,intent(in),check(len(xa)>=n),depend(xa) :: n=len(xa)
+            double precision intent(in) :: x
+            double precision intent(out) :: y
+        end subroutine splint
+    end interface 
+end python module lens_eff_module
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/
