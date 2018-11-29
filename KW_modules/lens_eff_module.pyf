@@ -1,0 +1,17 @@
+!    -*- f90 -*-
+! Note: the context of this file is case sensitive.
+
+python module lens_eff_module ! in 
+    interface  ! in :lens_eff_module
+        subroutine lens_eff(i,nrbin,chi_k,chibin,g_i) ! in :lens_eff_module:lens_eff_fun.f95
+            integer intent(in) :: i
+            integer, optional,intent(in),check((len(chibin)-1)>=nrbin),depend(chibin) :: nrbin=(len(chibin)-1)
+            double precision intent(in) :: chi_k
+            double precision dimension(nrbin + 1),intent(in) :: chibin
+            double precision intent(out) :: g_i
+        end subroutine lens_eff
+    end interface 
+end python module lens_eff_module
+
+! This file was auto-generated with f2py (version:2).
+! See http://cens.ioc.ee/projects/f2py2e/
