@@ -1,9 +1,12 @@
 #!/Users/ding/anaconda3/bin/python
 # Copy the code f2py_TW_zextend_multibin.py from the folder ./pseudo_PW_stage_IV, modify it to implemnt the new n(z) distribution (from Eric) for Stage-IV.
 # -- 02/15/2018
-# Similar as PW stage III and KW stages, we add the input of the number of ell (work) to be executed for each rank based on the approximated calculation time
+# 1. Similar as PW stage III and KW stages, we add the input of the number of ell (work) to be executed for each rank based on the approximated calculation time
 # for low and high ells. --06/14/2018
-# Copy the fortran code from the directory ../TW_f2py_SVD, use the modules compiled here. --07/10/2018
+# 2. Copy the fortran code from the directory ../TW_f2py_SVD, use the modules compiled here. --07/10/2018
+# 3. Add the additional parameter alpha accounting for the BAO scale shifting. It's applied as ell'=alpha * ell. Given \chi, k'= alpha*k.   --07/31/2018
+# 4. Normalize n(z) (which is d^2 N/dz*dOmega) to have the integration over z equals to 1.0. Scale_n is only considered in the shape noise. --08/31/2018
+# 5. Modify the function plot_numd_photoz, set dotted lines from y=0 to y=n(z). --11/25/2018
 # -----------------------------------------------------------------------------------------------------------------------------
 # Copy the code f2py_TW_zextend_bin.py, modify it to output data in multiple files with rank denoted in the name. -- 11/03/2017
 #######################################################################################################################################################
@@ -36,12 +39,14 @@ from scipy import interpolate
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy import integrate
 from scipy import special
-#sys.path.append('/Users/ding/Documents/playground/shear_ps/SVD_ps/TW_f2py_SVD')
-from lens_eff_module import lens_eff, photo_ni, comoving_d, gauleg, spline, splint
+sys.path.append('/Users/ding/Documents/playground/shear_ps/SVD_ps/PW_modules/')
+from lens_eff_module import lens_eff, photo_ni
+sys.path.append('/Users/ding/Documents/playground/shear_ps/SVD_ps/common_modules/')
+from module_market import dis_fun, comove_d, growth_factor
 import matplotlib.pyplot as plt
 import argparse
 
-parser = argparse.ArgumentParser(description='Use mcmc routine to get the BAO peak stretching parameter alpha and damping parameter, made by Zhejie.')
+parser = argparse.ArgumentParser(description='Calculate the convergence power spectrum and the G matrix, made by Zhejie.')
 parser.add_argument("--nrbin", help = '*Number of tomographic bins.', type=int, required=True)
 parser.add_argument("--nkout", help = '*Number of output k bins.', type=int, required=True)
 parser.add_argument("--Pk_type", help = "*The input power spectrum. Pwig_linear: linear power spectrum with BAO wiggles; Pwig_nonlinear: BAO wiggles damped. \
@@ -50,6 +55,8 @@ parser.add_argument("--cal_sn", help = "Whether it's going to calculate (pseudo)
 parser.add_argument("--cal_cijl", help = "Whether it's going to calculate Cij(l). True or False.")
 parser.add_argument("--cal_Gm", help = "Whether it's going to calculate G matrix. True or False")
 parser.add_argument("--show_nz", help = "Whether it's going to plot n^i(z) distribution in photo-z tomographic bin. True or False.")
+parser.add_argument("--odir0", help = "The basic directory for output files, default is './'.", required=True)
+parser.add_argument("--alpha", help = "The BAO scale shifting parameter alpha, i.e. k'=alpha * k or l'= alpha * l given a \chi. ", default=1.0, type=np.float64)
 ##parser.add_argument("--num_eigv", help = 'Number of eigenvalues included from SVD.', required=True)
 args = parser.parse_args()
 
@@ -60,6 +67,7 @@ cal_sn = args.cal_sn
 cal_cijl = args.cal_cijl
 cal_Gm = args.cal_Gm
 show_nz = args.show_nz
+alpha = args.alpha
 #----------------------------------------------------------------------------------------#
 
 def main():
@@ -87,6 +95,8 @@ def main():
 
     ##----- in traditational WL, sigmae is larger, equal to 0.26 from Table 2 in Eric et al. 2013 ----#
     sigmae = 0.26
+    # For PW-Stage IV, the constant of sigma_z (systematic error of source redshift from photometry)
+    sigma_z_const = 0.05
     #scale_n = 10.0
     scale_n = 31.0
 
@@ -106,8 +116,8 @@ def main():
     spl_nz = InterpolatedUnivariateSpline(center_z, n_z)
     n_sum = spl_nz.integral(center_z[0], center_z[-1])                      # Calculate the total number density
     #print(n_sum)
-    scale_dndz = scale_n/n_sum
-    n_z = n_z * scale_dndz                                                  # rescale n(z) to match the total number density from the data file equal to scale_n
+    scale_dndz = 1.0/n_sum                                                  # Normalize n(z) distribution
+    n_z = n_z * scale_dndz                                                  # rescale n(z) to match the total number density from the data file equal to 1.0/arcmin^2
     tck_nz = interpolate.splrep(center_z, n_z)
     zmax = 2.0                             # Based on Eric's n(z) data file for Stage IV weak lensing survey, we cut number density at z=2.0, after which n(z) is very small.
     #----------------------------------------------------------------------------------------------
@@ -119,8 +129,7 @@ def main():
     print('zmax_ext: ', zmax_ext)   # It's about 2.467.
     nz_y2 = np.zeros(num_z)
 
-    ##--for traditational WL, the total distribution of galaxies n(z) in tomographic bins is unchanged regardless
-    ## how complicate the photo-z probability distribution is --#
+    ##--for traditational WL, the total distribution of galaxies n(z) in tomographic bins is unchanged regardless how complicate the photo-z probability distribution is --#
     # calculate the number density nbar^i (integrate dn/dz) in the ith tomographic bin
     # the unit of number density is per steradian
     def n_i_bin(zbin, i):
@@ -128,15 +137,6 @@ def main():
         zf = zbin[i+1]
         n_i = interpolate.splint(zi, zf, tck_nz)
         return n_i
-
-    # it's from expression 1/H(z) without the constant
-    def dis_fun(z):
-        return 1.0/math.sqrt(cosmic_params.omega_m*(1.0+z)**3.0+ cosmic_params.omega_L)
-
-    # without c/H_0 constant
-    def comove_d(z):
-        distance = integrate.quad(dis_fun, 0.0, z)
-        return distance[0]
 
     ##-----set tomographic bins-------------##
     chi_z = np.zeros(num_z)
@@ -157,30 +157,11 @@ def main():
     zbin = np.zeros(nbin_ext+1)
     chibin = np.zeros(nbin_ext+1)
     for i in range(nbin_ext+1):
-        zbin[i]=i*zbin_avg + zmin
+        zbin[i] = i*zbin_avg + zmin
         # Just note that chibin[0] and chibin[1] store the first bin's up boundaries
         chibin[i] = interpolate.splev(zbin[i], tck_chiz, der=0)
 
-
-    # define growth factor G(z)
-    def growth_factor(z, Omega_m):
-        a = 1.0/(1.0+z)
-        v = (1.0+z)*(Omega_m/(1.0-Omega_m))**(1.0/3.0)
-        phi = math.acos((v+1.0-3.0**0.5)/(v+1.0+3.0**0.5))
-        m = (math.sin(75.0/180.0* math.pi))**2.0
-        part1c = 3.0**0.25 * (1.0+ v**3.0)**0.5
-    # first elliptic integral
-        F_elliptic = special.ellipkinc(phi, m)
-    # second elliptic integral
-        Se_elliptic = special.ellipeinc(phi, m)
-        part1 = part1c * ( Se_elliptic - 1.0/(3.0+3.0**0.5)*F_elliptic)
-        part2 = (1.0 - (3.0**0.5 + 1.0)*v*v)/(v+1.0+3.0**0.5)
-        d_1 = 5.0/3.0*v*(part1 + part2)
-    # if a goes to 0, use d_11, when z=1100, d_1 is close to d_11
-    #    d_11 = 1.0 - 2.0/11.0/v**3.0 + 16.0/187.0/v**6.0
-        return a*d_1
     G_0 = growth_factor(0.0, cosmic_params.omega_m) # G_0 at z=0, normalization factor
-
 
     # 3D power spectrum is from CAMB
     ##inputf = '../test_matterpower.dat'
@@ -216,22 +197,27 @@ def main():
         elif Pk_type == 'Pwig_nonlinear':
             Pk_par[i] = Pk_now_spl(k_par[i]) + (Pk_camb_spl(k_par[i]) - Pk_now_spl(k_par[i]))* np.exp(-k_par[i]**2.0*Sigma2_xy/2.0)
 
-    odir = './mpi_preliminary_data_{}/comm_size{}/'.format(Pk_type, size)
+    odir0 = args.odir0
+    if alpha != None:
+        odir0 = odir0 + 'BAO_alpha_{}/'.format(alpha)
+    odir = odir0 + 'mpi_preliminary_data_{}/comm_size{}/'.format(Pk_type, size)
+    prefix = 'TW_zext_'
+    outf_prefix = odir + prefix
     if rank == 0:
         if not os.path.exists(odir):
             os.makedirs(odir)
-    outf_prefix = odir + 'TW_zext_'
+    comm.Barrier()
 
     def get_shapenoise():
         shape_noise = np.zeros(nbin_ext)
         # Calculate covariance matrix of Pk, the unit of number density is per steradians
         for i in range(nbin_ext):
-            shape_noise[i] = sigmae**2.0/n_i_bin(zbin, i)
+            shape_noise[i] = sigmae**2.0/(scale_n * n_i_bin(zbin, i))
         #shape_noise[i] = sigmae**2.0/ s_nz[i] # It's the serious bug that I made and couldn't find it for half a year!
         pseudo_sn = shape_noise*constx
 
         # put the shape noise (includes the scale factor) in a file
-        outf = outf_prefix + 'pseudo_shapenoise_{0}rbins_ext.out'.format(nbin_ext)                   # basic variable
+        outf = odir0 + 'mpi_preliminary_data_{}/'.format(Pk_type) + prefix + 'pseudo_shapenoise_{0}rbins_ext.out'.format(nbin_ext)                   # basic variable
         np.savetxt(outf, pseudo_sn, fmt='%.15f', newline='\n')
 
 
@@ -253,6 +239,7 @@ def main():
             #n_l = default_num_l_in_rank * rank + l
             n_l = np.sum(num_ell_array[0: rank]) + l
             ell = l_min + n_l * delta_l
+            ell = alpha * ell
             ##offset_cijl = n_l * N_dset * data_type_size
             c_temp = np.zeros((nbin_ext, nbin_ext))
             for c_i in range(nbin_ext):
@@ -266,14 +253,14 @@ def main():
                 for g_col in range(num_par):
                     chi_k = ell/k_par[g_col]
                     z_k = interpolate.splev(chi_k, tck_zchi, der=0)   # Here z_k is understood as the spectroscopic redshift z
-                    g_i = lens_eff(zbin, center_z, n_z, nz_y2, c_i, z_k)
+                    g_i = lens_eff(zbin, center_z, n_z, nz_y2, c_i, z_k, sigma_z_const)
                     if z_k < zmax:  # zmax corresponding to \chi_h in the expression of C^ij(l)
                         GF = (growth_factor(z_k, cosmic_params.omega_m)/G_0)**2.0
                         #print('zmax, z_k, GF:', zmax, z_k, GF)
                         c_j = c_i
                         # here g_row is the row index of gmatrix_jk
                         for g_row in range(g_nr):
-                            g_j = lens_eff(zbin, center_z, n_z, nz_y2, c_j, z_k)
+                            g_j = lens_eff(zbin, center_z, n_z, nz_y2, c_j, z_k, sigma_z_const)
                             gmatrix_jk[g_row][g_col] = pow((1.0+z_k), 2.0)* g_i * g_j *ell*(1.0/k_camb[g_col]-1.0/k_camb[g_col+1])*GF
                             ###gmatrix_jk[g_row][g_col] = pow((1.0+z_k), 2.0)*lens_eff(c_i, chi_k)*lens_eff(c_j, chi_k)*ell*(1.0/k_par[g_col]-1.0/k_par[g_col+1])*GF
                             c_j += 1
@@ -331,6 +318,7 @@ def main():
             #n_l = default_num_l_in_rank * rank + l
             n_l = np.sum(num_ell_array[0: rank]) + l
             ell = l_min + n_l * delta_l
+            ell = alpha * ell
             ##offset_Gm = n_l * N_dset * num_kout * data_type_size
 
             Gmatrix_l = np.zeros((N_dset, num_kout))
@@ -345,10 +333,10 @@ def main():
                     for i in range(N_dset):
                         # redshift bin i: rb_i
                         rb_i = iu1[0][i]
-                        gi = lens_eff(zbin, center_z, n_z, nz_y2, rb_i, z_k)
+                        gi = lens_eff(zbin, center_z, n_z, nz_y2, rb_i, z_k, sigma_z_const)
                         # redshift bin j: rb_j
                         rb_j = iu1[1][i]
-                        gj = lens_eff(zbin, center_z, n_z, nz_y2, rb_j, z_k)
+                        gj = lens_eff(zbin, center_z, n_z, nz_y2, rb_j, z_k, sigma_z_const)
                         # here too, I did approximation for the integration, e.g., the term (1/k1 - 1/k2)
                         Gmatrix_l[i][j] = pow((1.0+z_k), 2.0)* gi * gj *ell*(1.0/kout[j]-1.0/kout[j+1])*GF*Pnorm_out[j]
             return Gmatrix_l
@@ -387,21 +375,26 @@ def main():
         odir = "./numd_distribute_photoz/" # output number density distribution in each tomographic bins.
         if not os.path.exists(odir):
             os.makedirs(odir)
+        z_sp_array = np.linspace(center_z[0], center_z[-1], 1000)
+        num_z = len(z_sp_array)
         photoz_matrix = np.array([], dtype='float64').reshape(0, num_z) # we may need more data points to make curv smooth. --05/24/2018
+
         for bin_id in range(nbin_ext):
             photoz_array = np.zeros(num_z)
             i = 0
-            for z_sp in center_z:
-                ni_zp = photo_ni(zbin, center_z, n_z, nz_y2, bin_id, z_sp)  # function photo_ni function outputs n_i(z) at redshift z
-                photoz_array[i] = ni_zp
+            #for z_sp in center_z:
+            for z_sp in z_sp_array:
+                ni_zp = photo_ni(zbin, center_z, n_z, nz_y2, bin_id, z_sp, sigma_z_const)  # function photo_ni function outputs n_i(z) at redshift z
+                photoz_array[i] =  ni_zp * scale_n     # since n_z has been normalized, we need to time ni_zp by scale_n for the real number density
                 i = i+1
             photoz_matrix = np.vstack([photoz_matrix, photoz_array])
 
         ofile = odir + "gal_numden_photoz_{}rbins.out".format(nbin_ext)
         header_line = " z(spectroscopic)   n_i(z) for each ith photo-z bin"  # first column is z, the other columns are n_i(z) with increasing bin id
-        np.savetxt(ofile, np.vstack([center_z, photoz_matrix]).T, fmt='%.7e', header=header_line, newline='\n', comments='#')
+        #np.savetxt(ofile, np.vstack([center_z, photoz_matrix]).T, fmt='%.7e', header=header_line, newline='\n', comments='#')
+        np.savetxt(ofile, np.vstack([z_sp_array, photoz_matrix]).T, fmt='%.7e', header=header_line, newline='\n', comments='#')
 
-    def plot_numd_photoz():
+    def plot_numd_photoz(n_z, tck_nz):
         idir = "./numd_distribute_photoz/"
         odir = idir + "nz_fig/"
         if not os.path.exists(odir):
@@ -412,33 +405,37 @@ def main():
         data_m = np.loadtxt(ifile, dtype='f8', delimiter=' ', comments='#')
         center_z = data_m[:, 0]
         photoz_matrix = data_m[:, 1:]
-        #print(photoz_matrix)
-        fig, ax = plt.subplots()
+        n_z = n_z * scale_n     # since n_z has been normalized, we need to add back scale_n to obtain the true n_z value
+
+        fig, ax = plt.subplots(figsize=(8, 6))
         for bin_id in range(nbin_ext):
             if bin_id == 11:  # Show the 12th tomographic bin, which has the largest n^i(z)
                 ax.plot(center_z, photoz_matrix[:, bin_id], 'r-.', lw=1.0)
             else:
                 ax.plot(center_z, photoz_matrix[:, bin_id], 'k-.', lw=0.5)
-            ax.axvline(zbin[bin_id+1], color='grey', linestyle=':')
-        ax.axvline(zbin[0], color='grey', linestyle=':')
-        ax.plot(center_z, n_z, 'k-', lw=2.0)
-        ax.set_xlabel('$z$', fontsize=20)
+
+        #ax.plot(center_z, n_z, 'k-', lw=2.0)
+        ax.plot(center_z, interpolate.splev(center_z, tck_nz, der=0)*scale_n, 'k-', lw=2.0)
+        ax.set_xlabel(r'$z$', fontsize=20)
         ax.set_xlim([0.0, zmax])
-        ax.set_ylim([0.0, 50])
+        ymax = 30
+        ax.set_ylim([0.0, ymax])
+        for bin_id in range(num_rbin):
+            ax.axvline(zbin[bin_id], ymin=0.0, ymax=interpolate.splev(zbin[bin_id], tck_nz, der=0)*scale_n/ymax, color='grey', linestyle=':')
         ax.minorticks_on()
         ax.tick_params('both', length=5, width=2, which='major', labelsize=15)
         ax.tick_params('both', length=3, width=1, which='minor')
 
-        ax.set_ylabel('$n^i(z)$ $[\mathrm{arcmin}]^{-2}$', fontsize=20)
-        ax.set_title("PW Stage-IV", fontsize=18)
+        ax.set_ylabel(r'$dn^i/dz \; [\mathrm{arcmin}]^{-2}$', fontsize=20)
+        ax.set_title("PWL-Stage IV", fontsize=20)
         plt.tight_layout()
-        figname = "gal_numden_{}rbins_photoz.pdf".format(nbin_ext)
+        figname = "gal_numden_{}rbins_photoz.pdf".format(num_rbin)
         plt.savefig(odir + figname)
         plt.show()
 
     if show_nz == "True" and rank == 0:
         get_photoz_density(center_z)
-        plot_numd_photoz()
+        plot_numd_photoz(n_z, tck_nz)
 
 
 if __name__ == '__main__':
