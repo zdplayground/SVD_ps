@@ -1,14 +1,11 @@
-! Copy the code log_prob_BAO.f95, simplify it to calculate Pk_model with damped BAO. Change parameter Sigma to Sigma^2. -- 09/05/2017
-! Remove the condition of alpha value range in the ln_prior function. --07/02/2018
-! #--------------------------------------------------------------------------------#
+! Copy the code from /Users/ding/Documents/playground/WiggleNowiggle/HS_pre_rec_run2346/pre_log_prob_rsd_HS.f90, simplify it to calculate Pk_model. -- 08/10/2017
 ! The likelihood function could be referenced from Seo et al. 2012. -- 08/10/2017
 ! Add constant A as the amplitude parameter. -- 08/17/2017
-! Correct the position of parameter A in the model. Set it as the scale factor of broadband power spectrum. -- 09/16/2017
-! Add judgment of parameter Sigma^2. --10/26/2018
+! Change module name from lnprob_module to lnprob_linear. -- 10/31/2018
 !
-! Use f2py -m lnprob_nonlinear -h lnprob_nonlinear.pyf log_prob_nonlinear_BAO.f95 --overwrite-signature to generate
+! Use f2py -m lnprob_linear -h lnprob_linear.pyf log_prob_BAO.f95 --overwrite-signature to generate
 ! signature file.
-! Use f2py -c --fcompiler=gnu95 lnprob_nonlinear.pyf log_prob_nonlinear_BAO.f95 to generate the module
+! Use f2py -c --fcompiler=gnu95 lnprob_linear.pyf log_prob_BAO.f95 to generate the module
 !
 subroutine match_params(theta, params_indices, fix_params, params_array, dim_theta, dim_params)
     implicit none
@@ -58,10 +55,8 @@ subroutine lnprior(theta, params_indices, fix_params, lp, dim_theta, dim_params)
     sigma2 = params_array(2)
     A = params_array(3)
 
-    if (alpha > 0.5d0 .and. alpha<1.5d0 .and. sigma2>-0.1d0 .and. sigma2<200.d0 .and. A > 0.d0 .and. A<1.5d0) then
+    if (alpha > 0.5d0 .and. alpha<1.5d0 .and. A > 0.d0 .and. A<1.5d0) then
         lp = 0.d0
-    ! if (alpha > 0.5d0 .and. alpha<1.5d0 .and. A > 0.d0 .and. A<1.5d0) then
-    !     lp = 0.d0
     else
         lp = -1.d30  ! return a negative infinitely large number
     endif

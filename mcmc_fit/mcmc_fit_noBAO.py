@@ -1,17 +1,7 @@
 #!/Users/ding/anaconda3/bin/python
-#--------------------------------------
-# Similar as the mcmc fitting code in BAO systematics project, we use the routine to fit spatial power spectrum extracted from lesing shear power spectrum. -- 08/10/2017
-# Since the power spectrum is for matter, there is no galaxy bias or RSD issues. Hence, the model could be much simpler than the galaxy power spectrum in redshift space.
-# We use the fitting model as Pwig(k')/Pnow(k')=1+(Pwig(k)/Pnow(k)-1)*exp(-k^2*Sigma^2/2).
-# Add parameter A as the amplitude parameter. -- 08/17/2017
-# Add the condition of Pk type. If for no-wiggle, we set parameter Sigma as a large number, but keep the model to be the same. -- 08/23/2017
-#---------------------------------------
-# 09/07/2017, marginalize Fisher matrix of P(k) for fitting in some certain k range.
-# 09/14/2017, set Sigma from theoretical value, do fitting with fixed Sigma.
-# 09/16/2017, after correcting the fitting model (take parameter A as the scale of power spectrum amplitude), we repeat the previous fitting.
-# --------------------------------------
-# Add judgment of mpi_used. See whether MPI used or not to calculate Cij_l and Gm_prime. -- 10/11/2017
-# Add f_sky parameter to include fitting data files in the folder TF_cross-ps. Not include f_sky in other cases (may need to polish the code). --11/01/2017
+# 1. Copy the code from mcmc_fit_Pwig_over_Pnow.py, modify the module name from lnprob_nonlinear to lnprob_linear. This code is especially for fitting power spectrum
+#    with BAO wiggles smoothed. In the log_prob_BAO.f95, we remove the parameter Sigma judgment. However, in code log_prob_nonlinear_BAO.f95, we keep Sigma parameter
+#    in case we need to fit it as well. --10/31/2018
 import emcee
 from emcee.utils import MPIPool
 from mpi4py import MPI
@@ -22,7 +12,7 @@ from scipy import linalg
 from scipy.interpolate import InterpolatedUnivariateSpline
 from functools import reduce
 import os, sys
-from lnprob_nonlinear import match_params, cal_pk_model, lnprior
+from lnprob_linear import match_params, cal_pk_model, lnprior
 from mcmc_funs import gelman_rubin_convergence, write_params, set_params
 import matplotlib.pyplot as plt
 #from matplotlib.ticker import MaxNLocator
@@ -191,7 +181,7 @@ def fit_BAO():
     parser.add_argument("--kmin", help = '*kmin fit boundary.', required=True)
     parser.add_argument("--kmax", help = '*kmax fit boundary.', required=True)
     parser.add_argument("--params_str", help = 'Set fitting parameters. 1: free; 0: fixed.', required=True)
-    #parser.add_argument("--Sigma2_inf", help = 'Whether setting Sigma2_xy as infinity or not.', default='False')
+    parser.add_argument("--Sigma2_inf", help = 'Whether setting Sigma2_xy as infinity or not.', default='False')
     parser.add_argument("--alpha", help = 'Fix the parameter alpha value.', default=1.0, type=np.float)
     parser.add_argument("--Pwig_type", help = '*The spatial P(k)_wig whether is linear or not. Type Pwig_linear or Pwig_nonlinear; in nonlinear, BAO is damped.', required=True)
     parser.add_argument("--Psm_type", help = 'The expression of Pnorm. The default case, Pnorm from Eisenstein & Zaldarriaga 1999. \
@@ -256,6 +246,10 @@ def fit_BAO():
         Sigma2_xy = Sigma2_xy_dict[stage_name]
     elif Pwig_type == 'Pwig_linear':
         Sigma2_xy = 0.0
+
+    if args.Sigma2_inf == 'True':
+        #Sigma2_xy = np.inf
+        Sigma2_xy = 100*100  # test whether it influences results or not
 
     ofile = odir + "mcmc_fit_{}_{}rbin_{}kbin_snf{}_params{}_Sigma2_{}.log".format(lt, num_rbin, num_kbin, shapenf, params_str, Sigma2_xy)
     if params_str == '001':
@@ -387,7 +381,7 @@ def fit_BAO():
 
         if set_SVc_on_CovP == 'True':
             ifile = idir_Pwig + 'Cov_Pwnw_inv_{}rbin_{}kbin_withshapenoisefactor{}_{}eigenvW_SVc.npz'.format(num_rbin, num_kbin, shapenf, num_eigv)
-            ####ifile = idir_Pwig + 'Cov_Pwnw_inv_30rbin_{}kbin_withshapenoisefactor1.0_{}eigenvW_SVc.npz'.format(num_kbin, num_eigv)  # only for some specific case, it's temporary
+            ####ifile = idir_Pwig + 'Cov_Pwnw_inv_{}rbin_{}kbin_withshapenoisefactor1.0_{}eigenvW_SVc.npz'.format(num_rbin, num_kbin, num_eigv) # only for some special case, it's temporary
             part_icov_Pk_wnw = filter_invCov_on_k(ifile, indices)
 
         mergedsamples, params_mcmc = mcmc_routine(N_params, N_walkers, theta, params_T, params_indices, fix_params, k_obs, Pk_wnw_obs, part_icov_Pk_wnw, Pwig_spl, Psm_spl, norm_gf, params_name, pool)
@@ -396,7 +390,11 @@ def fit_BAO():
         dof = N_fitbin-N_params
         reduced_chi2 = chi_square/dof
         print("chi^2/dof: ", reduced_chi2, "\n")
-        filename = 'Pk_wnw_{}rbin_{}kbin_snf{}_{}eigenvW_params{}.dat'.format(num_rbin, num_kbin, shapenf, num_eigv, params_str) # Sigma2_xy is fixed in the default case
+        if args.Sigma2_inf == 'True':
+            # in order to distinguish the Sigma2_xy value, we need to specify it.
+            filename = 'Pk_wnw_{}rbin_{}kbin_snf{}_{}eigenvW_params{}_Sigma2_{}.dat'.format(num_rbin, num_kbin, shapenf, num_eigv, params_str, Sigma2_xy)
+        else:
+            filename = 'Pk_wnw_{}rbin_{}kbin_snf{}_{}eigenvW_params{}.dat'.format(num_rbin, num_kbin, shapenf, num_eigv, params_str) # Sigma2_xy is fixed in the default case
         ofile_params = odir + filename
         print('ofile_params:', ofile_params)
         write_params(ofile_params, params_mcmc, params_name, reduced_chi2, fix_params, dof)
