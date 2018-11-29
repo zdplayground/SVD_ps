@@ -8,5 +8,5 @@ bin method. We attach the main input files and code of the project.
 3. We assumed the $\chi^2$ difference between the observed and theoretical shear power spectrum, based on which we extracted the spatial power
    spectrum using singular value decomposition technique.
 4. Using the emcee package, we fit the output spatial power spectrum by the BAO fitting model with the input spatial power spectrum, and 
-   obtaied the measurement error for the BAO scale and the amplitude of BAO wiggles.
+   obtaied the measurement error for the BAO scale and the amplitude of BAO wiggles, as well as the significance of BAO detection.
 
