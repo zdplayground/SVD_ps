@@ -5,6 +5,7 @@
 # from svd_CovPwig_over_Pnow_nSV.py is that we use P_{now, input} as the scale factor transfering inverse covariance matrix between Pwig and Pwnw. --05/04/2018
 # 3. Add the option "set_SVc_on_Pk" to include the case that we apply SVc on both Pk and CovP. -- 05/16/2018
 # 4. Add the argument "start_lmin" to skip small angular modes of C^ij(l) and G matrix due to f_sky effect. --06/05/2018
+# 5. Output the covariance matrix of Pwig. --11/16/2018
 #--------------------------------------------------------------------------------------------------------#
 # This code manages to play with SVD to find a good way to invert Cov^-1(P).
 # What's the ruler to measure the goodness of inversion? (See singular value decomposition method in Numerical Recipe or online.)
@@ -46,6 +47,7 @@ parser.add_argument("--scale_nz", help = 'The scale factor of total angular gala
                     and the optimistic case is 4.3/arcmin^2', type=float)
 parser.add_argument("--set_SVc_on_Pk", help = "*Whether we replace smaller SV to be SVc in the W matrix for the ouput Pk. Either True or False. If it's True, the set_SVc_on_CovP should be True too.", required=True)
 parser.add_argument("--set_SVc_on_CovP", help = '*Whether we replace smaller SV to be SVc in W matrix for the output inverse covariance matrix of Pk. Either True or False.', required=True)
+parser.add_argument("--modify_Cov_cij_cpq", help = "Whether we have modified the Cov_cij_cpq to output Cijl^prime and Gm^prime or not. Only for PW surveys.", required=True)
 
 args = parser.parse_args()
 lt = args.lt
@@ -62,6 +64,7 @@ odir0 = args.odir0
 scale_nz = args.scale_nz
 set_SVc_on_Pk = args.set_SVc_on_Pk
 set_SVc_on_CovP = args.set_SVc_on_CovP
+modify_Cov_cij_cpq = args.modify_Cov_cij_cpq
 
 # input an eigenvalue array, return an inversed eigenvalue matrix for the output inverse covariance matrix
 def fun_eigenv_m_Cov(A, boundary):
@@ -156,6 +159,9 @@ def extract_Pk_svd():
     lt_prefix = {'TF': 'Tully-Fisher', 'TW': 'TW_zext'}
 
     idir1 = '/mpi_{}_sn_exp_k_data_{}/comm_size{}/'.format(lt_prefix[lt], Pk_type, nrank)
+    if modify_Cov_cij_cpq == 'True':
+        idir1 = idir1 + 'modify_Cov_cij_cpq/'
+
     idir = idir0 + idir1
 
     if Psm_type == 'Pnow':
@@ -195,6 +201,8 @@ def extract_Pk_svd():
 
     if start_lmin != 1:
         odir2 = odir2 + 'start_ell_{}/'.format(start_lmin)
+    if modify_Cov_cij_cpq == 'True':
+        odir2 = odir2 + 'modify_Cov_cij_cpq/'
 
     odir0 = args.odir0
     if set_SVc_on_CovP == 'True' and set_SVc_on_Pk != 'True':
@@ -305,7 +313,7 @@ def extract_Pk_svd():
             ofile = odir_Pk + 'Cov_Pwnw_inv_{}rbin_{}kbin_withshapenoisefactor{}.npz'.format(num_rbin, num_kout, shapen_factor)
             print('Cov_P_inv: ', Cov_P_inv)
             np.savez(ofile, Cov_P_inv)
-        print("Cov_P_inv: ", Cov_P_inv)
+            print("Cov_P_inv: ", Cov_P_inv)
         # pylab.pcolor(Cov_P_inv)
         # pylab.colorbar()
         # pylab.show()
@@ -359,13 +367,16 @@ def extract_Pk_svd():
                 header_line = ' k_out   {}_out    sigma_P'.format(output_Pk_type)
                 np.savetxt(ofile, datam, fmt='%.7e', header=header_line, newline='\n', comments='#')
 
-                if set_SVc_on_CovP == 'True' and output_Pk_type == 'Pk_wnw':
+                if set_SVc_on_CovP == 'True':
                     Cov_Pwnw_inv = np.zeros(Cov_P_prime_inv.shape)
                     for i in range(num_kout):
                         for j in range(num_kout):
                             Cov_Pwnw_inv[i, j] = Cov_P_prime_inv[i, j]/(Pnorm_out[i] * Pnorm_out[j])
-
-                    ofile = odir_Pk + 'Cov_Pwnw_inv_{}rbin_{}kbin_withshapenoisefactor{}_{}eigenvW_SVc.npz'.format(num_rbin, num_kout, shapen_factor, num_eigv_W)
+                    if output_Pk_type == 'Pk_wnw':
+                        filename = 'Cov_Pwnw_inv_{}rbin_{}kbin_withshapenoisefactor{}_{}eigenvW_SVc.npz'.format(num_rbin, num_kout, shapen_factor, num_eigv_W)
+                    else:
+                        filename = 'Cov_{}_inv_{}rbin_{}kbin_withshapenoisefactor{}_{}eigenvW_SVc.npz'.format(output_Pk_type, num_rbin, num_kout, shapen_factor, num_eigv_W)
+                    ofile = odir_Pk + filename
                     np.savez(ofile, Cov_Pwnw_inv)
 
     save_Pk()
