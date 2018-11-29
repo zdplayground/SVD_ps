@@ -2,6 +2,7 @@
 # Copy the code from mpi_TF_sn_dep_Cov_cij_cross_bin.py in KW_stage_IV, modify it to calculate signal-to-noise ratio shown in Takada & Jain 2004(or 2008). --06/01/2018
 # Add the prefix "KW" on the code name to distinguish it from the case PW. The difference is due to additional content of C^ijl(l) (tomographic bins) in PW case. --06/02/2018
 # Find that what I output is (S/N)^2 instead of (S/N). --06/04/2018
+# 1. Modify the directory of cov_matrix_module. Output S/N instead of (S/N)^2. --10/24/2018
 #
 from mpi4py import MPI
 import numpy as np
@@ -9,7 +10,7 @@ import os, sys
 from scipy import integrate
 from scipy import linalg
 from functools import reduce
-sys.path.append('/Users/ding/Documents/playground/shear_ps/SVD_ps/TF_cross-ps/')
+sys.path.append('/Users/ding/Documents/playground/shear_ps/SVD_ps/common_modules/')
 from cov_matrix_module import cal_cov_matrix
 import argparse
 
@@ -20,8 +21,8 @@ parser.add_argument("--snf", help = '*The shape noise factor from the default va
 parser.add_argument("--Pk_type", help = "*The type of input P(k), whether it's linear (Pwig), or damped (Pwig_nonlinear), or without BAO (Pnow).", required=True)
 parser.add_argument("--Psm_type", help = '*The expression of Pnorm. The default case, Pnorm from Eisenstein & Zaldarriaga 1999. \
                                           If Pnorm=Pnow, it is derived from transfer function.')
-parser.add_argument("--idir0", help = "*The basic directory of input files, e.g., './precise_Cijl_Gm/'.", required=True)
-parser.add_argument("--odir0", help = "*The basic directory of output files, e.g., './precise_Cijl_Gm/'.", required=True)
+parser.add_argument("--idir0", help = "*The basic directory of input files, e.g., './KW_stage_IV/BAO_alpha_1.0/'.", required=True)
+parser.add_argument("--odir0", help = "*The basic directory of output files, e.g., './KW_stage_IV/BAO_alpha_1.0/'.", required=True)
 
 args = parser.parse_args()
 num_rbin = args.nrbin
@@ -112,7 +113,8 @@ def cal_signal_noise_ratio():
         Cov_cij_cpq = Cov_cij_cpq.T + np.triu(Cov_cij_cpq, k=1)        # It's symmetric. Construct the whole matrix for inversion.
         inv_Cov_cij_cpq = linalg.inv(Cov_cij_cpq, )
         inv_Cov_cij_cpq = inv_Cov_cij_cpq * ((2.0*ell+1.0)*delta_l*f_sky)             # Take account of the number of modes (the denominator)
-        SN_per_ell = reduce(np.dot, [cijl_true, inv_Cov_cij_cpq, cijl_true])
+        SN_square_per_ell = reduce(np.dot, [cijl_true, inv_Cov_cij_cpq, cijl_true])
+        SN_per_ell = SN_square_per_ell**0.5
 
         if rank == size-1:
             print('ell from rank', rank, 'is', ell, '\n')
@@ -120,15 +122,15 @@ def cal_signal_noise_ratio():
 
     #-------- Output signal-to-noise ratio from each ell -------##
     SN_ofile = ofprefix + 'SNR_per_ell_{}rbins_{}kbins_snf{}_rank{}.dat'.format(num_rbin, num_kin, snf, rank)
-    SN_square = np.array([], dtype=np.float64).reshape(0, 2)
+    SN_data = np.array([], dtype=np.float64).reshape(0, 2)
 
     iu1 = np.triu_indices(num_rbin)
     sn_id = [int((2*num_rbin+1-ii)*ii/2) for ii in range(num_rbin)]          # The ID of dset C^ij(l) added by the shape noise when i=j (auto power components)
     for l in range(num_l_in_rank):
         ell, SN_per_ell = SNR_fun(l, rank)
-        SN_square = np.vstack((SN_square, np.array([ell, SN_per_ell])))
-    header_line = " ell      (S/N)^2"
-    np.savetxt(SN_ofile, SN_square, fmt='%.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
+        SN_data = np.vstack((SN_data, np.array([ell, SN_per_ell])))
+    header_line = " ell      S/N"
+    np.savetxt(SN_ofile, SN_data, fmt='%.7e', delimiter=' ', newline='\n', header=header_line, comments='#')
     comm.Barrier()
 
     t_end = MPI.Wtime()
